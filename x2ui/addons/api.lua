@@ -1,4 +1,4 @@
-local DISALLOWED_UNIT_TYPES = {"housing"}
+local DISALLOWED_UNIT_TYPES = {housing = true}
 local DISALLOWED_TARGETING_UNITS = {
   "watchtarget",
   "targettarget",
@@ -6,7 +6,7 @@ local DISALLOWED_TARGETING_UNITS = {
 }
 
 local function isValidPath(path)
-  return not path:find("%.%.")
+  return type(path) == "string" and not path:find("%.%.")
 end
 
 local function getAddonNameFromPath(path)
@@ -53,23 +53,35 @@ local function getChatTimestamp()
   return timestamp
 end
 
-local function serializeTable(val, name, skipnewlines, depth)
+local function serializeTable(val, name, skipnewlines, depth, seen)
   skipnewlines = skipnewlines or false
   depth = depth or 0
+  seen = seen or {}
   local tmp = string.rep(" ", depth)
-  if name then
-    tmp = tmp .. name .. " = "
+  if name ~= nil then
+    if type(name) == "string" and string.match(name, "^[_%a][_%w]*$") then
+      tmp = tmp .. name .. " = "
+    else
+      tmp = tmp .. "[" .. serializeTable(name, nil, true, depth + 4, seen) .. "] = "
+    end
   end
   if type(val) == "table" then
-    local isArray = 0 < #val
+    if seen[val] then
+      error("Cannot serialize recursive table")
+    end
+    seen[val] = true
     tmp = tmp .. "{" .. (not skipnewlines and "\n" or "")
+    local arrayLength = #val
+    for i = 1, arrayLength do
+      tmp = tmp .. serializeTable(val[i], nil, skipnewlines, depth + 4, seen) .. "," .. (not skipnewlines and "\n" or "")
+    end
     for k, v in pairs(val) do
-      if isArray then
-        tmp = tmp .. serializeTable(v, nil, skipnewlines, depth + 4) .. "," .. (not skipnewlines and "\n" or "")
-      else
-        tmp = tmp .. serializeTable(v, k, skipnewlines, depth + 4) .. "," .. (not skipnewlines and "\n" or "")
+      local isArrayKey = type(k) == "number" and 1 <= k and k <= arrayLength and math.floor(k) == k
+      if not isArrayKey then
+        tmp = tmp .. serializeTable(v, k, skipnewlines, depth + 4, seen) .. "," .. (not skipnewlines and "\n" or "")
       end
     end
+    seen[val] = nil
     tmp = tmp .. string.rep(" ", depth) .. "}"
   elseif type(val) == "number" then
     tmp = tmp .. tostring(val)
@@ -99,11 +111,21 @@ local function deserializeTable(str)
   return result
 end
 
+local function packArgs(...)
+  return {
+    n = select("#", ...),
+    ...
+  }
+end
+
 local function inCombat()
   return X2Unit:UnitCombatState("player")
 end
 
 local function isAllowedUnitTypeById(unitId)
+  if unitId == nil then
+    return false
+  end
   local unitInfo = X2Unit:GetUnitInfoById(unitId)
   if unitInfo == nil then
     return false
@@ -111,9 +133,19 @@ local function isAllowedUnitTypeById(unitId)
   return not DISALLOWED_UNIT_TYPES[unitInfo.type]
 end
 
-local function isAllowedUnitType(unit)
+local function getAllowedUnitId(unit)
+  if unit == nil then
+    return nil
+  end
   local unitId = X2Unit:GetUnitId(unit)
-  return isAllowedUnitTypeById(unitId)
+  if not isAllowedUnitTypeById(unitId) then
+    return nil
+  end
+  return unitId
+end
+
+local function isAllowedUnitType(unit)
+  return getAllowedUnitId(unit) ~= nil
 end
 
 ADDON_API = {
@@ -158,22 +190,24 @@ function ADDON_API.Log:Info(message)
     X2Chat:DispatchChatMessage(CMF_SYSTEM, timestamp .. text)
   else
     local timestamp = getChatTimestamp()
-    X2Chat:DispatchChatMessage(CMF_SYSTEM, timestamp .. "" .. message)
+    X2Chat:DispatchChatMessage(CMF_SYSTEM, timestamp .. tostring(message))
   end
 end
 
 function ADDON_API.Log:Err(message)
   local timestamp = getChatTimestamp()
-  X2Chat:DispatchChatMessage(CMF_NOTICE, timestamp .. "" .. message)
+  if type(message) == "table" then
+    message = serializeTable(message)
+  end
+  X2Chat:DispatchChatMessage(CMF_NOTICE, timestamp .. tostring(message))
 end
 
 function ADDON_API.Log:WriteEventParameters(event, ...)
-  local params = {
-    ...
-  }
+  local params = packArgs(...)
   local timestamp = getChatTimestamp()
   X2Chat:DispatchChatMessage(CMF_SYSTEM, timestamp .. "Event: " .. event)
-  for i, param in ipairs(params) do
+  for i = 1, params.n do
+    local param = params[i]
     if type(param) == "table" then
       X2Chat:DispatchChatMessage(CMF_SYSTEM, timestamp .. "Parameter " .. i .. ": " .. serializeTable(param))
     else
@@ -211,8 +245,12 @@ function ADDON_API.File:Read(path)
 end
 
 function ADDON_API.GetSettings(addonId)
+  if type(addonId) ~= "string" then
+    return {}
+  end
+  local requestedId = sanitizeAddonId(addonId)
   for _, addon in ipairs(API_STORE.addons) do
-    if addon.id == sanitizeAddonId(addonId) then
+    if sanitizeAddonId(addon.id) == requestedId then
       return addon.settings
     end
   end
@@ -323,10 +361,11 @@ function ADDON_API.Unit:UnitDistance(unit)
 end
 
 function ADDON_API.Unit:GetUnitId(unit)
-  if not isAllowedUnitType(unit) then
+  local unitId = getAllowedUnitId(unit)
+  if unitId == nil then
     return nil
   end
-  return X2Unit:GetUnitId(unit)
+  return unitId
 end
 
 function ADDON_API.Unit:UnitBuffCount(unit)
@@ -344,7 +383,10 @@ function ADDON_API.Unit:UnitBuff(unit, index)
 end
 
 function ADDON_API.Unit:UnitWorldPosition(unit)
-  local id = X2Unit:GetUnitId(unit)
+  local id = getAllowedUnitId(unit)
+  if id == nil then
+    return nil
+  end
   return X2Unit:GetUnitWorldPosition(id)
 end
 
@@ -435,7 +477,10 @@ function ADDON_API.Unit:GetFactionName(unit)
 end
 
 function ADDON_API.Unit:GetUnitScreenNameTagOffset(unit)
-  local id = X2Unit:GetUnitId(unit)
+  local id = getAllowedUnitId(unit)
+  if id == nil then
+    return nil
+  end
   return X2Unit:GetUnitScreenNameTagOffset(id)
 end
 
@@ -448,7 +493,8 @@ function ADDON_API.Unit:UnitIsOffline(unit)
 end
 
 function ADDON_API.Unit:GetOverHeadMarkerUnitId(markerIndex)
-  if 12 < markerIndex or markerIndex < 1 then
+  markerIndex = tonumber(markerIndex)
+  if markerIndex == nil or math.floor(markerIndex) ~= markerIndex or 12 < markerIndex or markerIndex < 1 then
     error("api.Unit:GetOverHeadMarkerUnitId: markerIndex must be between 1 and 12")
   end
   return X2Unit:GetOverHeadMarkerUnitId(markerIndex)
@@ -634,7 +680,7 @@ function ADDON_API:DoIn(msec, callback, ...)
   table.insert(self.timers, {
     when = now + msec,
     callback = callback,
-    arg = arg
+    args = packArgs(...)
   })
 end
 
@@ -659,7 +705,10 @@ function ADDON_API.Ability:GetSkillsetNameById(skillsetId)
 end
 
 function ADDON_API.Ability:GetUnitClassName(unit)
-  local unitId = X2Unit:GetUnitId(unit)
+  local unitId = getAllowedUnitId(unit)
+  if unitId == nil then
+    return nil
+  end
   local unitInfo = X2Unit:GetUnitInfoById(unitId)
   if unitInfo ~= nil and unitInfo.class then
     return F_UNIT.GetPlayerJobName(unitInfo.class["1"], unitInfo.class["2"], unitInfo.class["3"])
@@ -720,7 +769,7 @@ function ADDON_API.Equipment:GetEquippedItemTooltipInfo(slotIdx)
 end
 
 function ADDON_API.Equipment:GetEquippedItemTooltipText(unit, slotIdx)
-  return X2Equipment:GetEquippedItemTooltipText("player", slotIdx)
+  return X2Equipment:GetEquippedItemTooltipText(unit, slotIdx)
 end
 
 function ADDON_API.Equipment:GetEquippedSkillsetLunagems(unit)
@@ -728,11 +777,16 @@ function ADDON_API.Equipment:GetEquippedSkillsetLunagems(unit)
   local targetEquipmentSlots = {ES_WAIST, ES_ARMS}
   for _, slotIdx in ipairs(targetEquipmentSlots) do
     local itemInfo = X2Equipment:GetEquippedItemTooltipText(unit, slotIdx)
-    if itemInfo ~= nil and itemInfo.socketInfo ~= nil then
+    if itemInfo ~= nil and itemInfo.socketInfo ~= nil and type(itemInfo.socketInfo.socketItem) == "table" then
       for _, lunagemId in ipairs(itemInfo.socketInfo.socketItem) do
         local lunagemInfo = X2Item:GetItemInfoByType(lunagemId)
-        if string.find(lunagemInfo.name, " Ancient ") or string.find(lunagemInfo.name, " Eternal ") then
-          table.insert(skillsetLunagemIds, lunagemId)
+        local lunagemName = lunagemInfo and lunagemInfo.name
+        if type(lunagemName) == "string" then
+          local isAncient = string.find(lunagemName, " Ancient ")
+          local isEternal = string.find(lunagemName, " Eternal ")
+          if isAncient or isEternal then
+            table.insert(skillsetLunagemIds, lunagemId)
+          end
         end
       end
     end
@@ -749,7 +803,7 @@ function ADDON_API.SiegeWeapon:GetSiegeWeaponTurnSpeed()
 end
 
 function ADDON_API.ItemEnchant:GetRatioInfos()
-  return X2ItemEchant:GetRatioInfos()
+  return X2ItemEnchant:GetRatioInfos()
 end
 
 function ADDON_API.ItemEnchant:GetEnchantItemInfo()
@@ -761,7 +815,7 @@ function ADDON_API.ItemEnchant:GetSupportItemInfo()
 end
 
 function ADDON_API.ItemEnchant:GetTargetItemInfo()
-  return X2ItemEchant:GetTargetItemInfo()
+  return X2ItemEnchant:GetTargetItemInfo()
 end
 
 function ADDON_API.Map:ToggleMapWithPortal(portal_zone_id, x, y, z)
@@ -801,6 +855,7 @@ function ADDON_API.Option:GetOnlyUseMyPortalSetting()
 end
 
 function ADDON_API.Option:SetOnlyUseMyPortalSetting(value)
+  value = tonumber(value) or value
   if value ~= 0 and value ~= 1 then
     value = value and 1 or 0
   end
@@ -812,6 +867,7 @@ function ADDON_API.Option:GetCustomCloneModelCountSetting()
 end
 
 function ADDON_API.Option:SetCustomCloneModelCountSetting(value)
+  value = tonumber(value) or 1
   if value < 1 then
     value = 1
   elseif 5 < value then
@@ -825,6 +881,7 @@ function ADDON_API.Option:GetCustomCloneModeSetting()
 end
 
 function ADDON_API.Option:SetCustomCloneModeSetting(value)
+  value = tonumber(value) or value
   if value ~= 0 and value ~= 1 then
     value = value and 1 or 0
   end

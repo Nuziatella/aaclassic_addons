@@ -35,6 +35,17 @@ API_STORE = {
   ev = EventHandler:new()
 }
 
+local function trimString(value)
+  return string.gsub(value, "^%s*(.-)%s*$", "%1")
+end
+
+local function addPackagePath(path)
+  if path == nil or string.find(package.path, path, 1, true) then
+    return
+  end
+  package.path = package.path .. ";" .. path
+end
+
 function sanitizeAddonId(addonId)
   local sanitized = addonId:gsub("[^%w_]", "_")
   if sanitized:match("^[%d]") then
@@ -43,11 +54,48 @@ function sanitizeAddonId(addonId)
   return sanitized
 end
 
-function SaveAddonSettings()
-  local settings = {}
-  for _, addon in ipairs(API_STORE.addons) do
-    settings[sanitizeAddonId(addon.id)] = addon.settings
+local function dispatchApiEvent(this, event, ...)
+  if API_STORE.ev ~= nil then
+    API_STORE.ev:emit(event, ...)
   end
+end
+
+local function updateApiWindow(this, dt)
+  if API_STORE.ev ~= nil then
+    API_STORE.ev:emit("UPDATE", dt)
+  end
+  for i = #ADDON_API.timers, 1, -1 do
+    local timer = ADDON_API.timers[i]
+    if timer.when <= ADDON_API.Time:GetUiMsec() then
+      table.remove(ADDON_API.timers, i)
+      timer.callback(unpack(timer.args, 1, timer.args.n))
+    end
+  end
+end
+
+local function createApiWindow()
+  local wnd = CreateEmptyWindow("aacApi", "UIParent")
+  wnd:RegisterEvent("CHAT_MESSAGE")
+  wnd:RegisterEvent("TEAM_MEMBERS_CHANGED")
+  wnd:RegisterEvent("UI_RELOADED")
+  wnd:RegisterEvent("UPDATE_PING_INFO")
+  wnd:SetHandler("OnEvent", dispatchApiEvent)
+  wnd:SetHandler("OnUpdate", updateApiWindow)
+  AddonPatchWnd(wnd)
+  ADDON_API.rootWindow = wnd
+  wnd:AddAnchor("TOPLEFT", "UIParent", 0, 0)
+  wnd:Show(true)
+  return wnd
+end
+
+function SaveAddonSettings()
+  local settings = API_STORE.settings or {}
+  for _, addon in ipairs(API_STORE.addons or {}) do
+    if addon.id ~= nil then
+      settings[sanitizeAddonId(addon.id)] = addon.settings or {}
+    end
+  end
+  API_STORE.settings = settings
   ADDON_API.File:Write("addon_settings", settings)
 end
 
@@ -57,10 +105,13 @@ function resetApiStore()
     addons = {},
     ev = EventHandler:new()
   }
+  ADDON_API.timers = {}
+  if ADDON_API.profiler ~= nil then
+    ADDON_API.profiler.totalWindows = 0
+    ADDON_API.profiler.windowCounts = {}
+  end
   X2DialogManager:DeleteByOwnerWindow("aacApi")
-  apiEmptyWnd = CreateEmptyWindow("aacApi", "UIParent")
-  apiEmptyWnd:Show(true)
-  EventHandler:clear()
+  apiEmptyWnd = createApiWindow()
 end
 
 function ADDON_API.addSettingPage(name, pageFunc)
@@ -79,7 +130,7 @@ end
 
 function runAddon(filePath, api, baseDir)
   local directory = filePath:match("(.*)/[^/]*$")
-  package.path = package.path .. ";" .. directory .. "/?.lua"
+  addPackagePath(directory .. "/?.lua")
   local addonFunc, err = loadfile(filePath)
   if not addonFunc then
     error("Failed to load addon: " .. err)
@@ -88,6 +139,9 @@ function runAddon(filePath, api, baseDir)
   local status, result = pcall(addonFunc)
   if not status then
     error("Error running addon: " .. result)
+  end
+  if type(result) ~= "table" then
+    error("Addon main.lua must return a table")
   end
   return result
 end
@@ -104,7 +158,10 @@ function loadAddonNames(filePath)
     return {}
   end
   for line in file:lines() do
-    table.insert(addonNames, line)
+    local addonName = trimString(line)
+    if addonName ~= "" and string.sub(addonName, 1, 1) ~= "#" and string.sub(addonName, 1, 2) ~= "--" then
+      table.insert(addonNames, addonName)
+    end
   end
   file:close()
   return addonNames
@@ -119,14 +176,15 @@ function InitAddons()
       if v.OnUnload ~= nil then
         local status, err = pcall(v.OnUnload)
         if not status then
-          ADDON_API.Log:Err("Failed to load " .. v.id .. " -- " .. err)
+          ADDON_API.Log:Err("Failed to unload " .. v.id .. " -- " .. err)
         end
       end
     end
   end
-  apiEmptyWnd:Show(false)
-  apiEmptyWnd:ClearChildren()
-  apiEmptyWnd:Show(true)
+  if apiEmptyWnd ~= nil then
+    apiEmptyWnd:Show(false)
+    apiEmptyWnd:ClearChildren()
+  end
   resetApiStore()
   ADDON_API.env = CreateAddonSandbox(baseDir, ADDON_API)
   local addonNames = loadAddonNames(baseDir .. "/addons.txt")
@@ -136,12 +194,12 @@ function InitAddons()
   API_STORE.addons = {}
   for _, file in ipairs(addonNames) do
     local filePath = baseDir .. "/" .. file .. "/main.lua"
-    local status, err = pcall(runAddon, filePath, ADDON_API, baseDir)
+    local status, addon = pcall(runAddon, filePath, ADDON_API, baseDir)
     if not status then
-      X2Chat:DispatchChatMessage(CMF_SYSTEM, "Error loading addon " .. file .. ": " .. err)
+      X2Chat:DispatchChatMessage(CMF_SYSTEM, "Error loading addon " .. file .. ": " .. addon)
     else
-      err.id = file
-      table.insert(API_STORE.addons, err)
+      addon.id = file
+      table.insert(API_STORE.addons, addon)
     end
   end
   local settings = ADDON_API.File:Read("addon_settings")
@@ -178,33 +236,7 @@ function LoadAddons()
   end
 end
 
-apiEmptyWnd = CreateEmptyWindow("aacApi", "UIParent")
-apiEmptyWnd:RegisterEvent("CHAT_MESSAGE")
-apiEmptyWnd:RegisterEvent("TEAM_MEMBERS_CHANGED")
-apiEmptyWnd:RegisterEvent("UI_RELOADED")
-apiEmptyWnd:RegisterEvent("UPDATE_PING_INFO")
-apiEmptyWnd:SetHandler("OnEvent", function(this, event, ...)
-  API_STORE.ev:emit(event, ...)
-end)
-
-function apiEmptyWnd:OnUpdate(dt)
-  if API_STORE.ev ~= nil then
-    API_STORE.ev:emit("UPDATE", dt)
-  end
-  for i = #ADDON_API.timers, 1, -1 do
-    local timer = ADDON_API.timers[i]
-    if timer.when <= ADDON_API.Time:GetUiMsec() then
-      table.remove(ADDON_API.timers, i)
-      timer.callback(timer.arg)
-    end
-  end
-end
-
-apiEmptyWnd:SetHandler("OnUpdate", apiEmptyWnd.OnUpdate)
-AddonPatchWnd(apiEmptyWnd)
-ADDON_API.rootWindow = apiEmptyWnd
-apiEmptyWnd:AddAnchor("TOPLEFT", "UIParent", 0, 0)
-apiEmptyWnd:Show(true)
+apiEmptyWnd = createApiWindow()
 
 local function OnUiReloaded()
   InitAddons()

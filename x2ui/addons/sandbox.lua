@@ -39,7 +39,8 @@ local function checkIfCalledFromAddon()
     if not info then
       break
     end
-    if string.find(info.source, "/documents//Addon", 1, true) then
+    local source = string.lower(string.gsub(info.source or "", "\\", "/"))
+    if string.find(source, "/documents/", 1, true) and string.find(source, "/addon/", 1, true) then
       return true
     end
   end
@@ -252,7 +253,7 @@ local function PatchFactory(lib)
               results[i] = AddonPatchWnd(results[i])
             end
           end
-          return unpack(results, 1, results.n)
+          return table.unpack(results, 1, results.n)
         end
         local args = table.pack(...)
         if args[1] == proxy then
@@ -336,7 +337,6 @@ function CreateAddonSandbox(baseDir, api)
     X2Player = X2Player,
     CreateItemIconButton = patchedCreateItemIconButton,
     petFrame = AddonPatchWnd(petFrame),
-    CreateItemIconButton = CreateItemIconButton,
     combatTextLocale = combatTextLocale,
     ParseCombatMessage = ParseCombatMessage,
     GetTextureInfo = GetTextureInfo,
@@ -678,6 +678,12 @@ function CreateAddonSandbox(baseDir, api)
     if name == "api" then
       return ADDON_API
     end
+    if type(name) ~= "string" then
+      error("Invalid require path: " .. tostring(name))
+    end
+    if string.find(name, "..", 1, true) or string.find(name, ":", 1, true) or string.sub(name, 1, 1) == "/" then
+      error("Invalid require path: " .. tostring(name))
+    end
     if not sandbox_loaded[name] then
       local file, err = loadfile(baseDir .. "/" .. name .. ".lua")
       if not file then
@@ -685,7 +691,11 @@ function CreateAddonSandbox(baseDir, api)
       end
       local module_env = setmetatable({}, {__index = sandboxEnv})
       setfenv(file, module_env)
-      sandbox_loaded[name] = file()
+      local result = file()
+      if result == nil then
+        result = true
+      end
+      sandbox_loaded[name] = result
     end
     return sandbox_loaded[name]
   end
