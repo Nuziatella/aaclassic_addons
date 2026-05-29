@@ -47,6 +47,21 @@ local function checkIfCalledFromAddon()
   return false
 end
 
+local function rememberEventUnitIds(event, args)
+  if AddonRememberKnownUnitId == nil then
+    return
+  end
+  if event == "COMBAT_TEXT" or event == "COMBAT_TEXT_COLLISION" then
+    AddonRememberKnownUnitId(args[1], "event:" .. event .. ":source")
+    AddonRememberKnownUnitId(args[2], "event:" .. event .. ":target")
+  elseif event == "COMBAT_MSG" then
+    AddonRememberKnownUnitId(args[1], "event:COMBAT_MSG:target")
+    AddonRememberKnownUnitId(args[3], "event:COMBAT_MSG:source")
+  elseif event == "UNIT_DEAD" then
+    AddonRememberKnownUnitId(args[1], "event:UNIT_DEAD")
+  end
+end
+
 local patchedWindows = setmetatable({}, {__mode = "k"})
 
 function AddonPatchWnd(wnd)
@@ -113,15 +128,15 @@ function AddonPatchWnd(wnd)
     function wnd:SetHandler(eventName, handler)
       if eventName == "OnEvent" and type(handler) == "function" then
         local function wrapped(self, event, ...)
+          local args = {
+            ...
+          }
           if blockedEvents[event] then
             ADDON_API.Log:Info("|cFFC13D36[Addon API] Event: '" .. event .. "' is not allowed to be handled.")
             
             return
           end
           if sanitizedEvents[event] then
-            local args = {
-              ...
-            }
             if event == "COMBAT_MSG" then
               local combatMsgType = args[2]
               if blockedCombatMsgTypes[combatMsgType] then
@@ -143,6 +158,7 @@ function AddonPatchWnd(wnd)
               end
             end
           end
+          rememberEventUnitIds(event, args)
           return handler(self, event, ...)
         end
         

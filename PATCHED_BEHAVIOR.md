@@ -40,12 +40,16 @@ Saved addon settings are preserved for addons that are absent or fail to load, i
 
 Existing guarded unit wrappers now avoid calling the underlying client unit API with nil ids:
 
-- `api.Unit:GetUnitInfoById(id)` returns nil for nil/disallowed ids.
+- `api.Unit:GetUnitInfoById(id)` returns nil for nil, unknown, or disallowed ids.
 - `api.Unit:UnitWorldPosition(unit)` returns nil when the resolved id is nil/disallowed.
 - `api.Unit:GetUnitScreenNameTagOffset(unit)` returns nil when the resolved id is nil/disallowed.
 - `api.Ability:GetUnitClassName(unit)` returns nil when the resolved id is nil/disallowed.
 
 These are crash/log-spam guards on already exposed calls, not expanded visibility or discovery behavior.
+
+Raw id lookups now require the id to be present in a session-wide known-unit registry at `API_STORE.knownUnitIds`. The registry is runtime-only and is seeded by allowed unit-token lookups, overhead marker lookups, and allowed combat/death event payloads before addon handlers run.
+
+Numeric-looking raw ids are rejected in token-style unit APIs so addons cannot use unit-token calls as raw-id scanner probes. This applies to unit name, screen, distance, buff/debuff, status, faction, targeting, and team-state wrappers.
 
 ### Equipment
 
@@ -77,10 +81,10 @@ Addon call-stack checks normalize path case and separators before detecting call
 
 The patched Lua sources parse with Lua 5.1 syntax checks.
 
-In-game validation confirmed.
+The packed `.alb` files were rebuilt from the patched Lua sources. In-game validation is still required for this known-unit-id gating change.
 
 Packed SHA256 values:
 
-- `/master/game/scriptsbin/x2ui/addons/api.alb`: `7afd0e490eebb32387f275a2a56905c5989fc4fee63b1edaca21eb0881970fcd`
-- `/master/game/scriptsbin/x2ui/addons/sandbox.alb`: `85749e97c75c893ff717ca8d6d2ff4c7eb1c9006aa0ff337b333068cb516479d`
-- `/master/game/scriptsbin/x2ui/addons/addons.alb`: `49a106dd298c4a7a122ef043e9e9430530a295410a12d3a346ad9a6a0b4b2d9e`
+- `/master/game/scriptsbin/x2ui/addons/api.alb`: `490efe5a3fa4f00f4ec422a6db54ea37ecbe2ecaf37aa3929a29309d2edabdbf`
+- `/master/game/scriptsbin/x2ui/addons/sandbox.alb`: `1a8e27584c1fa867edc88977bc180507859652c237324c2f33031eccc05fa11b`
+- `/master/game/scriptsbin/x2ui/addons/addons.alb`: `79e6d8f4a1a9586318a00023575a3a8308fd545908a4a62d1a808b0061ae784e`

@@ -122,6 +122,66 @@ local function inCombat()
   return X2Unit:UnitCombatState("player")
 end
 
+local function normalizeUnitId(unitId)
+  if unitId == nil then
+    return nil
+  end
+  local normalized = tostring(unitId)
+  normalized = string.gsub(normalized, "^%s*(.-)%s*$", "%1")
+  if normalized == "" or normalized == "0" then
+    return nil
+  end
+  return normalized
+end
+
+local function looksLikeRawUnitId(unit)
+  if type(unit) == "number" then
+    return true
+  end
+  if type(unit) ~= "string" then
+    return false
+  end
+  return string.match(unit, "^%s*%d+%s*$") ~= nil
+end
+
+local function getKnownUnitIdStore()
+  if API_STORE == nil then
+    return nil
+  end
+  if API_STORE.knownUnitIds == nil then
+    API_STORE.knownUnitIds = {}
+  end
+  return API_STORE.knownUnitIds
+end
+
+local function rememberKnownUnitId(unitId, source)
+  local normalized = normalizeUnitId(unitId)
+  if normalized == nil then
+    return nil
+  end
+  local knownUnitIds = getKnownUnitIdStore()
+  if knownUnitIds ~= nil then
+    knownUnitIds[normalized] = {
+      id = unitId,
+      source = source,
+      seen_ms = X2Time:GetUiMsec()
+    }
+  end
+  return unitId
+end
+
+local function getKnownUnitId(unitId)
+  local normalized = normalizeUnitId(unitId)
+  if normalized == nil then
+    return nil
+  end
+  local knownUnitIds = getKnownUnitIdStore()
+  if knownUnitIds == nil or knownUnitIds[normalized] == nil then
+    return nil
+  end
+  return knownUnitIds[normalized].id or normalized
+end
+
 local function isAllowedUnitTypeById(unitId)
   if unitId == nil then
     return false
@@ -137,15 +197,37 @@ local function getAllowedUnitId(unit)
   if unit == nil then
     return nil
   end
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   local unitId = X2Unit:GetUnitId(unit)
   if not isAllowedUnitTypeById(unitId) then
     return nil
   end
-  return unitId
+  return rememberKnownUnitId(unitId, "token:" .. tostring(unit))
 end
 
 local function isAllowedUnitType(unit)
   return getAllowedUnitId(unit) ~= nil
+end
+
+local function getAllowedKnownUnitInfo(unitId)
+  local knownUnitId = getKnownUnitId(unitId)
+  if knownUnitId == nil then
+    return nil, nil
+  end
+  local unitInfo = X2Unit:GetUnitInfoById(knownUnitId)
+  if unitInfo == nil or DISALLOWED_UNIT_TYPES[unitInfo.type] then
+    return nil, nil
+  end
+  return knownUnitId, unitInfo
+end
+
+function AddonRememberKnownUnitId(unitId, source)
+  if not looksLikeRawUnitId(unitId) then
+    return nil
+  end
+  return rememberKnownUnitId(unitId, source)
 end
 
 ADDON_API = {
@@ -338,25 +420,39 @@ function ADDON_API.Interface:GetUIScale()
 end
 
 function ADDON_API.Unit:GetUnitNameById(id)
-  return X2Unit:GetUnitNameById(id)
+  local unitId = getAllowedKnownUnitInfo(id)
+  if unitId == nil then
+    return nil
+  end
+  return X2Unit:GetUnitNameById(unitId)
 end
 
 function ADDON_API.Unit:GetUnitInfoById(id)
-  if not isAllowedUnitTypeById(id) then
+  local unitId, unitInfo = getAllowedKnownUnitInfo(id)
+  if unitId == nil then
     return nil
   end
-  return X2Unit:GetUnitInfoById(id)
+  return unitInfo
 end
 
 function ADDON_API.Unit:UnitName(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitName(unit)
 end
 
 function ADDON_API.Unit:GetUnitScreenPosition(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:GetUnitScreenPosition(unit)
 end
 
 function ADDON_API.Unit:UnitDistance(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitDistance(unit)
 end
 
@@ -461,18 +557,30 @@ function ADDON_API.Unit:UnitGearScore(unit)
 end
 
 function ADDON_API.Unit:UnitTeamAuthority(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitTeamAuthority(unit)
 end
 
 function ADDON_API.Unit:UnitIsTeamMember(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitIsTeamMember(unit)
 end
 
 function ADDON_API.Unit:UnitIsForceAttack(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitIsForceAttack(unit)
 end
 
 function ADDON_API.Unit:GetFactionName(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:GetFactionName(unit)
 end
 
@@ -489,6 +597,9 @@ function ADDON_API.Unit:GetHighAbilityRscInfo()
 end
 
 function ADDON_API.Unit:UnitIsOffline(unit)
+  if looksLikeRawUnitId(unit) then
+    return nil
+  end
   return X2Unit:UnitIsOffline(unit)
 end
 
@@ -497,7 +608,7 @@ function ADDON_API.Unit:GetOverHeadMarkerUnitId(markerIndex)
   if markerIndex == nil or math.floor(markerIndex) ~= markerIndex or 12 < markerIndex or markerIndex < 1 then
     error("api.Unit:GetOverHeadMarkerUnitId: markerIndex must be between 1 and 12")
   end
-  return X2Unit:GetOverHeadMarkerUnitId(markerIndex)
+  return rememberKnownUnitId(X2Unit:GetOverHeadMarkerUnitId(markerIndex), "marker:" .. tostring(markerIndex))
 end
 
 function ADDON_API.Unit:GetCurrentZoneGroup()
@@ -509,6 +620,9 @@ function ADDON_API.Unit:TargetUnit(unit)
     if unit == disallowed then
       return
     end
+  end
+  if looksLikeRawUnitId(unit) then
+    return
   end
   return X2Unit:TargetUnit(unit)
 end

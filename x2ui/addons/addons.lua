@@ -32,6 +32,7 @@ end
 API_STORE = {
   settingPages = {},
   addons = {},
+  knownUnitIds = {},
   ev = EventHandler:new()
 }
 
@@ -103,6 +104,7 @@ function resetApiStore()
   API_STORE = {
     settingPages = {},
     addons = {},
+    knownUnitIds = {},
     ev = EventHandler:new()
   }
   ADDON_API.timers = {}
