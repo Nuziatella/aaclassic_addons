@@ -1,3 +1,12 @@
+local function logApiCallbackError(context, err)
+  local message = context .. " -- " .. tostring(err)
+  if ADDON_API ~= nil and ADDON_API.Log ~= nil and type(ADDON_API.Log.Err) == "function" then
+    ADDON_API.Log:Err(message)
+  elseif X2Chat ~= nil then
+    X2Chat:DispatchChatMessage(CMF_NOTICE, message)
+  end
+end
+
 EventHandler = {}
 EventHandler.__index = EventHandler
 
@@ -10,6 +19,9 @@ function EventHandler:new()
 end
 
 function EventHandler:on(event, callback)
+  if type(callback) ~= "function" then
+    return
+  end
   if not self.listeners[event] then
     self.listeners[event] = {}
   end
@@ -21,7 +33,10 @@ function EventHandler:emit(event, ...)
     return
   end
   for _, callback in ipairs(self.listeners[event]) do
-    callback(...)
+    local status, err = pcall(callback, ...)
+    if not status then
+      logApiCallbackError("Addon event callback failed for " .. tostring(event), err)
+    end
   end
 end
 
@@ -69,7 +84,12 @@ local function updateApiWindow(this, dt)
     local timer = ADDON_API.timers[i]
     if timer.when <= ADDON_API.Time:GetUiMsec() then
       table.remove(ADDON_API.timers, i)
-      timer.callback(unpack(timer.args, 1, timer.args.n))
+      if type(timer.callback) == "function" then
+        local status, err = pcall(timer.callback, unpack(timer.args, 1, timer.args.n))
+        if not status then
+          logApiCallbackError("Addon timer callback failed", err)
+        end
+      end
     end
   end
 end
@@ -130,14 +150,14 @@ function ADDON_API.CreateOptionSubFrame(parent, subFrameIndex)
   return CreateOptionSubFrame(parent, subFrameIndex)
 end
 
-function runAddon(filePath, api, baseDir)
+function runAddon(filePath, api, baseDir, env)
   local directory = filePath:match("(.*)/[^/]*$")
   addPackagePath(directory .. "/?.lua")
   local addonFunc, err = loadfile(filePath)
   if not addonFunc then
     error("Failed to load addon: " .. err)
   end
-  setfenv(addonFunc, ADDON_API.env)
+  setfenv(addonFunc, env or ADDON_API.env)
   local status, result = pcall(addonFunc)
   if not status then
     error("Error running addon: " .. result)
@@ -189,33 +209,31 @@ function InitAddons()
   end
   resetApiStore()
   ADDON_API.env = CreateAddonSandbox(baseDir, ADDON_API)
+  local settings = ADDON_API.File:Read("addon_settings")
+  if settings == nil then
+    settings = {}
+  end
+  API_STORE.settings = settings
   local addonNames = loadAddonNames(baseDir .. "/addons.txt")
   if #addonNames == 0 then
     return
   end
   API_STORE.addons = {}
   for _, file in ipairs(addonNames) do
+    local settingsId = sanitizeAddonId(file)
+    if settings[settingsId] == nil then
+      settings[settingsId] = {enabled = true}
+    end
+    local addonEnv = CreateAddonEnvironment(baseDir, ADDON_API, ADDON_API.env)
     local filePath = baseDir .. "/" .. file .. "/main.lua"
-    local status, addon = pcall(runAddon, filePath, ADDON_API, baseDir)
+    local status, addon = pcall(runAddon, filePath, ADDON_API, baseDir, addonEnv)
     if not status then
       X2Chat:DispatchChatMessage(CMF_SYSTEM, "Error loading addon " .. file .. ": " .. addon)
     else
       addon.id = file
+      addon.settings = settings[settingsId]
       table.insert(API_STORE.addons, addon)
     end
-  end
-  local settings = ADDON_API.File:Read("addon_settings")
-  if settings == nil then
-    settings = {}
-    for _, addon in ipairs(API_STORE.addons) do
-      settings[sanitizeAddonId(addon.id)] = {enabled = true}
-    end
-  end
-  for _, addon in ipairs(API_STORE.addons) do
-    if settings[sanitizeAddonId(addon.id)] == nil then
-      settings[sanitizeAddonId(addon.id)] = {enabled = true}
-    end
-    addon.settings = settings[sanitizeAddonId(addon.id)]
   end
   API_STORE.settings = settings
   ADDON_API.File:Write("addon_settings", settings)

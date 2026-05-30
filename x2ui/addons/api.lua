@@ -251,9 +251,11 @@ ADDON_API = {
   ItemEnchant = {},
   Map = {},
   Quest = {},
+  House = {},
   Zone = {},
   Craft = {},
   Option = {},
+  Nametag = {},
   Chat = {},
   baseDir = "",
   rootWindow = {},
@@ -331,7 +333,10 @@ function ADDON_API.GetSettings(addonId)
     return {}
   end
   local requestedId = sanitizeAddonId(addonId)
-  for _, addon in ipairs(API_STORE.addons) do
+  if API_STORE.settings ~= nil and API_STORE.settings[requestedId] ~= nil then
+    return API_STORE.settings[requestedId]
+  end
+  for _, addon in ipairs(API_STORE.addons or {}) do
     if sanitizeAddonId(addon.id) == requestedId then
       return addon.settings
     end
@@ -1002,10 +1007,75 @@ function ADDON_API.Option:SetCustomCloneModeSetting(value)
   return SetOptionItemValue(OPTION_ITEM_CUSTOM_CLONE_MODE, value)
 end
 
+local function NormalizeNametagColorArg(color)
+  if color == nil then
+    error("api.Nametag:SetColor*: color is required")
+  end
+  if type(color) == "number" then
+    return X2Util:NumberToString(math.floor(color))
+  end
+  if type(color) == "string" then
+    local parsed = tonumber(color)
+    if parsed ~= nil then
+      return X2Util:NumberToString(math.floor(parsed))
+    end
+  end
+  error("api.Nametag:SetColor*: color must be an integer or numeric string")
+end
+
+local function ExecuteNametagColorCommand(command, color)
+  local colorStr = NormalizeNametagColorArg(color)
+  Console:ExecuteString(command .. " " .. colorStr)
+end
+
+function ADDON_API.Nametag:SetColorFriendly(color)
+  ExecuteNametagColorCommand("nametag_color_friendly", color)
+end
+
+function ADDON_API.Nametag:SetColorFriendlyNPC(color)
+  ExecuteNametagColorCommand("nametag_color_friendly_npc", color)
+end
+
+function ADDON_API.Nametag:SetColorNeutral(color)
+  ExecuteNametagColorCommand("nametag_color_neutral", color)
+end
+
+function ADDON_API.Nametag:SetColorParty(color)
+  ExecuteNametagColorCommand("nametag_color_party", color)
+end
+
+function ADDON_API.Nametag:SetColorRaid(color)
+  ExecuteNametagColorCommand("nametag_color_raid", color)
+end
+
+function ADDON_API.Nametag:SetColorRaidPK(color)
+  ExecuteNametagColorCommand("nametag_color_raidpk", color)
+end
+
+function ADDON_API.Nametag:SetColorPK(color)
+  ExecuteNametagColorCommand("nametag_color_pk", color)
+end
+
+function ADDON_API.Nametag:SetColorEnemy(color)
+  ExecuteNametagColorCommand("nametag_color_enemy", color)
+end
+
+function ADDON_API.Nametag:SetColorMonster(color)
+  ExecuteNametagColorCommand("nametag_color_monster", color)
+end
+
+function ADDON_API.Nametag:SetColorPirate(color)
+  ExecuteNametagColorCommand("nametag_color_pirate", color)
+end
+
 function ADDON_API.Chat:DispatchChatMessage(chatMessageFilter, message)
   X2Chat:DispatchChatMessage(chatMessageFilter, message)
 end
 
 function ADDON_API.Chat:ExpressEmotion(emotion)
   X2Chat:ExpressEmotion(emotion)
+end
+
+function ADDON_API.House:GetGuardTowerStepInfo()
+  return X2House:GetGuardTowerStepInfo()
 end

@@ -313,6 +313,47 @@ local function patchedCreateItemIconButton(...)
   return AddonPatchWnd(button)
 end
 
+local function loadSandboxModule(baseDir, api, env, loaded, name)
+  if name == "api" then
+    return api
+  end
+  if type(name) ~= "string" then
+    error("Invalid require path: " .. tostring(name))
+  end
+  if string.find(name, "..", 1, true) or string.find(name, ":", 1, true) or string.sub(name, 1, 1) == "/" then
+    error("Invalid require path: " .. tostring(name))
+  end
+  if not loaded[name] then
+    local file, err = loadfile(baseDir .. "/" .. name .. ".lua")
+    if not file then
+      error("Error loading file " .. err)
+    end
+    local module_env = setmetatable({}, {__index = env})
+    setfenv(file, module_env)
+    local result = file()
+    if result == nil then
+      result = true
+    end
+    loaded[name] = result
+  end
+  return loaded[name]
+end
+
+function CreateAddonEnvironment(baseDir, api, sandboxEnv)
+  local loaded = {}
+  local env = {
+    baseDir = baseDir
+  }
+  function env.require(name)
+    return loadSandboxModule(baseDir, api, env, loaded, name)
+  end
+  setmetatable(env, {
+    __index = sandboxEnv,
+    __metatable = "locked"
+  })
+  return env
+end
+
 function CreateAddonSandbox(baseDir, api)
   local sandbox_loaded = {}
   api.baseDir = baseDir
@@ -691,29 +732,7 @@ function CreateAddonSandbox(baseDir, api)
   setmetatable(sandboxEnv, {__metatable = "locked"})
   
   function sandboxEnv.require(name)
-    if name == "api" then
-      return ADDON_API
-    end
-    if type(name) ~= "string" then
-      error("Invalid require path: " .. tostring(name))
-    end
-    if string.find(name, "..", 1, true) or string.find(name, ":", 1, true) or string.sub(name, 1, 1) == "/" then
-      error("Invalid require path: " .. tostring(name))
-    end
-    if not sandbox_loaded[name] then
-      local file, err = loadfile(baseDir .. "/" .. name .. ".lua")
-      if not file then
-        error("Error loading file " .. err)
-      end
-      local module_env = setmetatable({}, {__index = sandboxEnv})
-      setfenv(file, module_env)
-      local result = file()
-      if result == nil then
-        result = true
-      end
-      sandbox_loaded[name] = result
-    end
-    return sandbox_loaded[name]
+    return loadSandboxModule(baseDir, api, sandboxEnv, sandbox_loaded, name)
   end
   
   return sandboxEnv

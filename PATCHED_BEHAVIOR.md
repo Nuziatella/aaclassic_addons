@@ -10,11 +10,15 @@ The addon root event window setup is centralized so refresh/reload creates a ful
 
 Addon reload now clears pending `api:DoIn` timers and resets window profiler counts before loading the next addon set.
 
+Addon event-bus callbacks and `api:DoIn` timer callbacks now run behind protected calls. A failing callback is logged and no longer stops later addon callbacks from running.
+
 `addons.txt` loading now skips blank lines and comment lines that start with `#` or `--`.
 
 Addon `main.lua` files must return a table. Invalid return values fail that addon instead of breaking the loader after the protected load call.
 
 Saved addon settings are preserved for addons that are absent or fail to load, instead of rebuilding `addon_settings` only from successfully loaded addons.
+
+Saved addon settings are loaded into `API_STORE.settings` before addon `main.lua` files execute, so top-level `api.GetSettings(addonId)` calls can see existing saved values.
 
 ### Timer Arguments
 
@@ -22,7 +26,7 @@ Saved addon settings are preserved for addons that are absent or fail to load, i
 
 ### Settings Lookup
 
-`api.GetSettings(addonId)` now returns `{}` when `addonId` is not a string. String ids are still sanitized before comparing against loaded addon ids.
+`api.GetSettings(addonId)` now returns `{}` when `addonId` is not a string. String ids are sanitized and checked against `API_STORE.settings` first, then against loaded addon ids.
 
 ### Logging
 
@@ -67,6 +71,12 @@ Numeric-looking raw ids are rejected in token-style unit APIs so addons cannot u
 
 Boolean-like option setters now coerce numeric strings such as `"0"` and `"1"` before mapping values to `0` or `1`.
 
+### Live API Refresh
+
+The patched `api.lua` has been refreshed against the live `X:\Games\AAClassic` addon wrapper decompile from May 29, 2026.
+
+Live-added `api.Nametag:SetColor*` helpers and `api.House:GetGuardTowerStepInfo()` are preserved in the patched API source.
+
 ### Sandbox
 
 The sandboxed global `CreateItemIconButton` now remains patched and returns an addon-patched widget.
@@ -74,6 +84,8 @@ The sandboxed global `CreateItemIconButton` now remains patched and returns an a
 Sandbox proxy no-argument function calls now use `table.unpack` consistently when returning multiple values.
 
 Sandbox `require(name)` now rejects non-string, parent-directory, drive-qualified, and absolute paths. Modules that return nil are cached as `true`, matching standard Lua `require` behavior.
+
+Each addon now gets its own sandbox environment and module cache, backed by the shared sandbox API surface. Accidental globals from one addon no longer leak into another addon.
 
 Addon call-stack checks normalize path case and separators before detecting calls from the user addon directory.
 
@@ -85,6 +97,6 @@ The packed `.alb` files were rebuilt from the patched Lua sources. In-game valid
 
 Packed SHA256 values:
 
-- `/master/game/scriptsbin/x2ui/addons/api.alb`: `490efe5a3fa4f00f4ec422a6db54ea37ecbe2ecaf37aa3929a29309d2edabdbf`
-- `/master/game/scriptsbin/x2ui/addons/sandbox.alb`: `1a8e27584c1fa867edc88977bc180507859652c237324c2f33031eccc05fa11b`
-- `/master/game/scriptsbin/x2ui/addons/addons.alb`: `79e6d8f4a1a9586318a00023575a3a8308fd545908a4a62d1a808b0061ae784e`
+- `/master/game/scriptsbin/x2ui/addons/api.alb`: `694f092dfe143cfbb0a5c8905bf29103463e9be3d41062816489a34ac766a4cc`
+- `/master/game/scriptsbin/x2ui/addons/sandbox.alb`: `b8541b867044fe2b42868239ed1b3137dd9cd7a94a6d3052569c513549ee53ca`
+- `/master/game/scriptsbin/x2ui/addons/addons.alb`: `d8f2ef1751bf640deacc4777346b3c3f17a8e0730c744868c754245f7500af85`
